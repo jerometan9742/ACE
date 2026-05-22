@@ -1,0 +1,30 @@
+name: Anthropic Code Review
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+
+jobs:
+  anthropic-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Anthropic Code Review
+        uses: anthropics/anthropic-code-review-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          review_focus: |
+            Focus on:
+            1. Security issues — API key exposure, credential leaks, injection vulnerabilities
+            2. Trading logic errors — incorrect signal calculations, wrong ATR multipliers, hardcoded values
+            3. Risk violations — anything that could bypass the kill switch, daily loss limit, or position limits
+            4. Missing indicator fetches — agent prompts that reference indicators not fetched in signal_engine/
+            5. Paper/live mode safety — any code that could accidentally switch to live trading
