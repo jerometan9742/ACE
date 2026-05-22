@@ -1,30 +1,54 @@
-const PHASE_MAP = {
-  ACCUMULATION: { label: "ACCUMULATION", cls: "amd-acc" },
-  MANIPULATION: { label: "MANIPULATION", cls: "amd-man" },
-  DISTRIBUTION:  { label: "DISTRIBUTION",  cls: "amd-dist" },
-  UNKNOWN:       { label: "UNKNOWN",        cls: "amd-unk" },
-};
+const PHASES = [
+  {
+    key: "ACCUMULATION",
+    cls: "acc",
+    label: "Accumulation",
+    descs: {
+      active: "Smart money building long positions. FVGs forming below price.",
+      inactive: "Waiting for accumulation signals.",
+    },
+  },
+  {
+    key: "MANIPULATION",
+    cls: "man",
+    label: "Manipulation",
+    descs: {
+      active: "Judas swing detected. Liquidity hunt in progress.",
+      inactive: "No manipulation phase active.",
+    },
+  },
+  {
+    key: "DISTRIBUTION",
+    cls: "dist",
+    label: "Distribution",
+    descs: {
+      active: "BOS confirmed. Distribution targeting HTF liquidity.",
+      inactive: "No distribution phase active.",
+    },
+  },
+];
 
 export default function AMDPhase({ phase, confluenceScore }) {
-  const p = PHASE_MAP[phase] || PHASE_MAP.UNKNOWN;
-  const pct = Math.min(100, (confluenceScore / 10) * 100);
-
-  const barColor =
-    confluenceScore >= 7 ? "var(--green)" :
-    confluenceScore >= 4 ? "var(--amber)" : "var(--red)";
+  const active = (phase || "UNKNOWN").toUpperCase();
 
   return (
     <div className="amd-panel">
-      <div className="card-label">◈ AMD Phase</div>
-      <div className={`amd-phase-badge ${p.cls}`}>{p.label}</div>
-      <div className="conf-bar-wrap">
-        <div className="card-label">Confluence {confluenceScore}/10</div>
-        <div className="conf-bar-bg">
-          <div
-            className="conf-bar-fill"
-            style={{ width: `${pct}%`, background: barColor }}
-          />
-        </div>
+      <div className="section-label">
+        AMD Phase — Confluence {confluenceScore}/10
+      </div>
+      <div className="amd-boxes">
+        {PHASES.map(({ key, cls, label, descs }) => {
+          const isActive = active === key;
+          return (
+            <div key={key} className={`amd-box ${cls}${isActive ? " active" : ""}`}>
+              <div className="amd-dot" />
+              <span className="amd-box-label">{label.toUpperCase()}</span>
+              <span className="amd-box-desc">
+                {isActive ? descs.active : descs.inactive}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

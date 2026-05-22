@@ -51,6 +51,9 @@ _state: Dict[str, Any] = {
     # Mission log (last 50 entries)
     "mission_log": [],
 
+    # Swarm memory lessons (last 10)
+    "swarm_lessons": [],
+
     # Kill switch
     "kill_switch_active": False,
 }
