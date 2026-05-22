@@ -1,5 +1,8 @@
 # Environment variables — never commit
 .env
+
+# Kill switch lock — runtime file, never commit
+kill_switch.lock
 .env.local
 .env.*.local
 
