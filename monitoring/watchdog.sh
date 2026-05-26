@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Watchdog for ACE — runs every 10 minutes via cron.
-# Checks services, API credits, disk usage, and sends UptimeRobot heartbeat.
+# Checks services, API credits, disk/memory usage, and sends UptimeRobot heartbeat.
 #
 # Crontab entry:
-#   */10 * * * * /opt/ace/monitoring/watchdog.sh >> /var/log/ace-watchdog.log 2>&1
+#   */10 * * * * /root/ACE/monitoring/watchdog.sh >> /root/ACE/logs/watchdog.log 2>&1
 
 set -euo pipefail
 
@@ -89,7 +89,29 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 3: Anthropic API credits — test call, alert on credit/auth error
+# Check 3: ace-frontend.service
+# ---------------------------------------------------------------------------
+if ! systemctl is-active --quiet ace-frontend.service; then
+    echo "[$TIMESTAMP] ALERT: ace-frontend.service is down — restarting"
+    systemctl restart ace-frontend.service
+    sleep 5
+    if systemctl is-active --quiet ace-frontend.service; then
+        send_telegram "<b>WATCHDOG — ace-frontend.service</b>
+Service was down and has been restarted successfully.
+Time: ${TIMESTAMP}"
+        echo "[$TIMESTAMP] ace-frontend.service restarted OK"
+    else
+        send_telegram "<b>WATCHDOG — ace-frontend.service FAILED TO RESTART</b>
+Manual intervention required.
+Time: ${TIMESTAMP}"
+        echo "[$TIMESTAMP] ERROR: ace-frontend.service failed to restart"
+    fi
+else
+    echo "[$TIMESTAMP] ace-frontend.service OK"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 4: Anthropic API credits — test call, alert on credit/auth error
 # ---------------------------------------------------------------------------
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 if [[ -n "$ANTHROPIC_API_KEY" ]]; then
@@ -124,7 +146,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 4: Disk usage > 80%
+# Check 5: Disk usage > 80%
 # ---------------------------------------------------------------------------
 DISK_USAGE=$(df / | awk 'NR==2 {print $5}' | tr -d '%')
 if [[ "$DISK_USAGE" -gt 80 ]]; then
@@ -137,7 +159,25 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 5: UptimeRobot heartbeat ping
+# Check 6: Memory usage > 85%
+# ---------------------------------------------------------------------------
+MEM_TOTAL=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+MEM_AVAILABLE=$(grep MemAvailable /proc/meminfo | awk '{print $2}')
+MEM_USED=$(( MEM_TOTAL - MEM_AVAILABLE ))
+MEM_PCT=$(( MEM_USED * 100 / MEM_TOTAL ))
+
+if [[ "$MEM_PCT" -gt 85 ]]; then
+    send_telegram "<b>WATCHDOG — Memory Usage High</b>
+RAM at ${MEM_PCT}% (${MEM_USED}kB / ${MEM_TOTAL}kB used).
+Consider restarting services or adding swap.
+Time: ${TIMESTAMP}"
+    echo "[$TIMESTAMP] ALERT: memory usage at ${MEM_PCT}%"
+else
+    echo "[$TIMESTAMP] Memory usage OK (${MEM_PCT}%)"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 7: UptimeRobot heartbeat ping
 # ---------------------------------------------------------------------------
 if [[ -n "$UPTIMEROBOT_URL" ]]; then
     curl -s "$UPTIMEROBOT_URL" -o /dev/null \

@@ -1,0 +1,19 @@
+[Unit]
+Description=ACE Dashboard (FastAPI + React)
+After=network.target ace-bot.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/ACE
+EnvironmentFile=/root/ACE/.env
+ExecStart=/root/ACE/venv/bin/uvicorn \
+  monitoring.dashboard.backend.api:app \
+  --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -170,7 +170,7 @@ CORRELATION_LIMIT=0.85
 
 ## VPS & Infrastructure
 
-- VPS IP: TBD (new server, separate from Fred at 46.62.165.36)
+- VPS IP: 204.168.254.128 (new server, separate from Fred at 46.62.165.36)
 - OS: Ubuntu 24.04
 - Services: `ace-bot.service` and `ace-dashboard.service` via systemd
 - Auto-deploy: GitHub push triggers VPS pull and service restart

@@ -1,0 +1,16 @@
+[Unit]
+Description=ACE React Frontend
+After=network.target ace-dashboard.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/ACE/monitoring/dashboard/frontend
+ExecStart=/usr/bin/serve -s dist -l 3000
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
