@@ -1,0 +1,35 @@
+//@version=6
+strategy("ACE V1 – FVG Baseline", overlay=true,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=5,
+     initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.04)
+
+// ── Inputs ──────────────────────────────────────────────────────────────────
+atr_len     = input.int(14, "ATR Length")
+atr_sl_mult = input.float(1.5, "ATR SL Multiplier")
+atr_tp_mult = input.float(3.0, "ATR TP Multiplier")
+
+// ── ATR ──────────────────────────────────────────────────────────────────────
+atr = ta.atr(atr_len)
+
+// ── FVG Detection ────────────────────────────────────────────────────────────
+// Bullish FVG: gap between bar[-2].high and bar[0].low (current bar skips over prior high)
+bull_fvg = low > high[2]
+// Bearish FVG: gap between bar[-2].low and bar[0].high
+bear_fvg = high < low[2]
+
+// ── Signal (entry on close of FVG candle) ────────────────────────────────────
+if bull_fvg
+    sl = close - atr_sl_mult * atr
+    tp = close + atr_tp_mult * atr
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", stop=sl, limit=tp)
+
+if bear_fvg
+    sl = close + atr_sl_mult * atr
+    tp = close - atr_tp_mult * atr
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", stop=sl, limit=tp)
+
+// ── Visuals ──────────────────────────────────────────────────────────────────
+plotshape(bull_fvg, "Bull FVG", shape.triangleup,   location.belowbar, color.green, size=size.tiny)
+plotshape(bear_fvg, "Bear FVG", shape.triangledown, location.abovebar, color.red,   size=size.tiny)

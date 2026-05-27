@@ -1,0 +1,95 @@
+//@version=6
+strategy("ACE V4 – Full Confluence Engine (≥7)", overlay=true,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=5,
+     initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.04)
+
+// ── Inputs ──────────────────────────────────────────────────────────────────
+atr_len         = input.int(14,  "ATR Length")
+atr_sl_mult     = input.float(1.5, "ATR SL Multiplier")
+atr_tp_mult     = input.float(3.0, "ATR TP Multiplier")
+confluence_min  = input.int(7,   "Min Confluence Score", minval=1, maxval=10)
+vol_ma_len      = input.int(20,  "Volume MA Length")
+
+// ── ATR & Volume ─────────────────────────────────────────────────────────────
+atr    = ta.atr(atr_len)
+vol_ma = ta.sma(volume, vol_ma_len)
+
+// ── Kill Zones (UTC) ─────────────────────────────────────────────────────────
+h = hour(time, "UTC")
+m = minute(time, "UTC")
+london_open  = h >= 7 and h < 9
+in_ny_open   = (h == 13 and m >= 30) or h == 14
+ny_afternoon = h >= 17 and h < 19
+in_kill_zone = london_open or in_ny_open or ny_afternoon
+
+// ── FVG (+2) ─────────────────────────────────────────────────────────────────
+bull_fvg = low > high[2]
+bear_fvg = high < low[2]
+
+// ── Order Block (+2) ─────────────────────────────────────────────────────────
+var float last_bull_ob = na
+var float last_bear_ob = na
+if close[1] < open[1] and close > high[1]
+    last_bull_ob := low[1]
+if close[1] > open[1] and close < low[1]
+    last_bear_ob := high[1]
+near_bull_ob = not na(last_bull_ob) and math.abs(close - last_bull_ob) / close < 0.005
+near_bear_ob = not na(last_bear_ob) and math.abs(close - last_bear_ob) / close < 0.005
+
+// ── BOS – Break of Structure (+1) ────────────────────────────────────────────
+swing_high = ta.highest(high, 10)[1]
+swing_low  = ta.lowest(low, 10)[1]
+bull_bos = close > swing_high
+bear_bos = close < swing_low
+
+// ── Volume Confirmation (+1) ──────────────────────────────────────────────────
+vol_confirm = volume > vol_ma * 1.2
+
+// ── Confluence Scoring ────────────────────────────────────────────────────────
+// Bull confluence
+bull_score = 0
+bull_score := bull_score + (bull_fvg    ? 2 : 0)
+bull_score := bull_score + (near_bull_ob ? 2 : 0)
+bull_score := bull_score + (in_kill_zone ? 2 : 0)
+bull_score := bull_score + (bull_bos    ? 1 : 0)
+bull_score := bull_score + (vol_confirm  ? 1 : 0)
+// Max = 8 (Judas +2 is in V5)
+
+// Bear confluence
+bear_score = 0
+bear_score := bear_score + (bear_fvg    ? 2 : 0)
+bear_score := bear_score + (near_bear_ob ? 2 : 0)
+bear_score := bear_score + (in_kill_zone ? 2 : 0)
+bear_score := bear_score + (bear_bos    ? 1 : 0)
+bear_score := bear_score + (vol_confirm  ? 1 : 0)
+
+bull_signal = bull_score >= confluence_min
+bear_signal = bear_score >= confluence_min
+
+// ── Entries ───────────────────────────────────────────────────────────────────
+if bull_signal
+    sl = close - atr_sl_mult * atr
+    tp = close + atr_tp_mult * atr
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", stop=sl, limit=tp)
+
+if bear_signal
+    sl = close + atr_sl_mult * atr
+    tp = close - atr_tp_mult * atr
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", stop=sl, limit=tp)
+
+// ── Visuals ──────────────────────────────────────────────────────────────────
+bgcolor(in_kill_zone ? color.new(color.yellow, 90) : na, title="Kill Zone")
+plotshape(bull_signal, "Bull ≥7", shape.triangleup,   location.belowbar, color.lime,   size=size.normal)
+plotshape(bear_signal, "Bear ≥7", shape.triangledown, location.abovebar, color.orange, size=size.normal)
+
+// Score table
+var table score_tbl = table.new(position.top_right, 2, 3, bgcolor=color.new(color.black, 70), border_width=1)
+if barstate.islast
+    table.cell(score_tbl, 0, 0, "Bull Score", text_color=color.white, text_size=size.small)
+    table.cell(score_tbl, 1, 0, str.tostring(bull_score) + "/8", text_color=bull_score >= 7 ? color.lime : color.gray, text_size=size.small)
+    table.cell(score_tbl, 0, 1, "Bear Score", text_color=color.white, text_size=size.small)
+    table.cell(score_tbl, 1, 1, str.tostring(bear_score) + "/8", text_color=bear_score >= 7 ? color.red : color.gray, text_size=size.small)
+    table.cell(score_tbl, 0, 2, "Threshold", text_color=color.white, text_size=size.small)
+    table.cell(score_tbl, 1, 2, str.tostring(confluence_min), text_color=color.yellow, text_size=size.small)
