@@ -173,7 +173,10 @@ class TestCheckTradeOrder:
 
     # ── check 7: position limit ───────────────────────────────────────────
     def test_position_limit_blocks(self, tmp_path, monkeypatch):
-        positions = [{"pair": "BTC/USDT"}, {"pair": "ETH/USDT"}, {"pair": "SOL/USDT"}]
+        positions = [
+            {"pair": "BTC/USDT"}, {"pair": "ETH/USDT"}, {"pair": "SOL/USDT"},
+            {"pair": "BNB/USDT"}, {"pair": "LINK/USDT"},
+        ]
         result = _check(
             _decision(),
             _portfolio(open_positions=positions),
@@ -182,8 +185,8 @@ class TestCheckTradeOrder:
         assert result["approved"] is False
         assert result["blocked_by"] == "position_limit"
 
-    def test_two_open_positions_allowed(self, tmp_path, monkeypatch):
-        positions = [{"pair": "BTC/USDT"}, {"pair": "ETH/USDT"}]
+    def test_four_open_positions_allowed(self, tmp_path, monkeypatch):
+        positions = [{"pair": "BTC/USDT"}, {"pair": "ETH/USDT"}, {"pair": "SOL/USDT"}, {"pair": "BNB/USDT"}]
         result = _check(_decision(), _portfolio(open_positions=positions), tmp_path, monkeypatch)
         assert result["blocked_by"] != "position_limit"
 

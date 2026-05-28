@@ -109,8 +109,10 @@ function KillZoneTimer() {
   );
 }
 
+const DEFAULT_PAIRS = ["BTC/USDT","ETH/USDT","SOL/USDT","BNB/USDT","LINK/USDT","AVAX/USDT","XRP/USDT","ARB/USDT"];
+
 export default function TabAMDRadar({ pairPhases }) {
-  const PAIRS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"];
+  const PAIRS = Object.keys(pairPhases || {}).length > 0 ? Object.keys(pairPhases) : DEFAULT_PAIRS;
 
   return (
     <div className="tab-panel">

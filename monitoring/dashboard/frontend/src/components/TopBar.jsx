@@ -47,7 +47,7 @@ export default function TopBar({ status, killSwitch, connected, prices }) {
         ))}
         {(!prices || Object.keys(prices).length === 0) && (
           <>
-            {["BTC/USDT", "ETH/USDT", "SOL/USDT"].map((p) => (
+            {["BTC/USDT","ETH/USDT","SOL/USDT","BNB/USDT","LINK/USDT","AVAX/USDT","XRP/USDT","ARB/USDT"].map((p) => (
               <div className="price-item" key={p}>
                 <span className="price-pair">{p}</span>
                 <span className="price-val" style={{ color: "var(--text-muted)" }}>—</span>

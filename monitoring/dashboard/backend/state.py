@@ -54,9 +54,14 @@ _state: Dict[str, Any] = {
 
     # Per-pair AMD phases (AMD Radar tab)
     "pair_phases": {
-        "BTC/USDT": {"phase": "UNKNOWN", "confluence_score": 0},
-        "ETH/USDT": {"phase": "UNKNOWN", "confluence_score": 0},
-        "SOL/USDT": {"phase": "UNKNOWN", "confluence_score": 0},
+        "BTC/USDT":  {"phase": "UNKNOWN", "confluence_score": 0},
+        "ETH/USDT":  {"phase": "UNKNOWN", "confluence_score": 0},
+        "SOL/USDT":  {"phase": "UNKNOWN", "confluence_score": 0},
+        "BNB/USDT":  {"phase": "UNKNOWN", "confluence_score": 0},
+        "LINK/USDT": {"phase": "UNKNOWN", "confluence_score": 0},
+        "AVAX/USDT": {"phase": "UNKNOWN", "confluence_score": 0},
+        "XRP/USDT":  {"phase": "UNKNOWN", "confluence_score": 0},
+        "ARB/USDT":  {"phase": "UNKNOWN", "confluence_score": 0},
     },
 
     # Agent pipeline
@@ -227,9 +232,9 @@ def sync_from_portfolio() -> None:
                 for pair, data in amd_file.items():
                     phase = data.get("phase", "UNKNOWN").upper()
                     conf  = data.get("confluence_score", 0)
-                    if pair in _state["pair_phases"]:
-                        _state["pair_phases"][pair]["phase"] = phase
-                        _state["pair_phases"][pair]["confluence_score"] = conf
+                    _state["pair_phases"].setdefault(pair, {"phase": "UNKNOWN", "confluence_score": 0})
+                    _state["pair_phases"][pair]["phase"] = phase
+                    _state["pair_phases"][pair]["confluence_score"] = conf
                 # Primary pair drives top-level fields
                 watchlist = [p.strip() for p in os.getenv("WATCHLIST", "BTC/USDT,ETH/USDT,SOL/USDT").split(",")]
                 primary = watchlist[0] if watchlist else "BTC/USDT"
