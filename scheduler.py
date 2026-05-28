@@ -54,6 +54,7 @@ def _process_candle(signal_data: dict) -> None:
     if len(candles) < 20:
         return
 
+    logger.info("Analysis triggered: %s 5m (%d candles)", pair, len(candles))
     try:
         _run_analysis(pair, candles)
     except Exception as exc:
@@ -74,9 +75,6 @@ def _run_analysis(pair: str, candles: list) -> None:
 
     current_session = sess.get_current_session()
     _check_session_transition(pair, current_session)
-
-    if not sess.is_trading_allowed():
-        return
 
     price = cc.get_current_price(pair)
     if price <= 0:
@@ -126,10 +124,22 @@ def _run_analysis(pair: str, candles: list) -> None:
     from monitoring.logger import log_signal
     log_signal(pair, score, score >= _CONFLUENCE_MIN, conf_result.get("breakdown", {}))
 
-    if score < _CONFLUENCE_MIN:
-        return  # below threshold — discard silently
+    logger.info(
+        "Confluence %d/10 for %s — session: %s (breakdown: %s)",
+        score, pair,
+        current_session.get("name", "outside"),
+        conf_result.get("breakdown", {}),
+    )
 
-    logger.info("Confluence %d/10 for %s — firing agent pipeline", score, pair)
+    if score < _CONFLUENCE_MIN:
+        return  # below threshold — no trade
+
+    # Session gate: score high enough but outside kill zone — log and skip
+    if not sess.is_trading_allowed():
+        logger.info("Confluence %d/10 for %s — outside kill zone, no trade", score, pair)
+        return
+
+    logger.info("Confluence %d/10 for %s — inside kill zone, firing agent pipeline", score, pair)
 
     # Agent pipeline
     from agents.pipeline import run_pipeline

@@ -85,6 +85,12 @@ async def _stream_pair_tf(exchange, pair: str, timeframe: str, callback: Callabl
             if latest_ts and latest_ts != prev_ts:
                 prev_ts = latest_ts
                 candles = _candle_cache[pair][timeframe]
+                if timeframe == "5m":
+                    close = candles[-1].get("close", 0) if candles else 0
+                    logger.info(
+                        "Live candle: %s %s close=%.2f — sending to analysis",
+                        pair, timeframe, close,
+                    )
                 try:
                     callback({
                         "pair": pair,
