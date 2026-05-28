@@ -316,9 +316,10 @@ def run() -> None:
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT,  _handle_shutdown)
 
-    from monitoring.telegram_alerts import send_startup_alert, _send
+    from monitoring.telegram_alerts import send_startup_alert, send_message
     from execution.paper_trader import start_monitor, stop_monitor
     from signal_engine.websocket import start_streams
+    import asyncio as _asyncio
 
     send_startup_alert()
     start_monitor()
@@ -330,11 +331,12 @@ def run() -> None:
     except Exception as exc:
         logger.error("WebSocket fatal error: %s", exc)
 
-    # Reached after SIGTERM/SIGINT sets _running=False and streams exit cleanly
+    # Reached after SIGTERM/SIGINT sets _running=False and streams exit cleanly.
+    # asyncio.run() is now closed — use a fresh run() for the final Telegram send.
     stop_monitor()
     _save_portfolio_state()
     try:
-        _send("<b>ACE Offline</b> — graceful shutdown complete")
+        _asyncio.run(send_message("<b>ACE Offline</b> — graceful shutdown complete"))
     except Exception:
         pass
     logger.info("ACE shutdown complete")
