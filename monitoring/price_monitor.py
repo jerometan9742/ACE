@@ -23,7 +23,7 @@ def restore_open_positions(log_path=None) -> int:
     from pathlib import Path
 
     if log_path is None:
-        log_path = Path(__file__).resolve().parents[2] / "logs" / "trades.jsonl"
+        log_path = Path(__file__).resolve().parents[1] / "logs" / "trades.jsonl"
     else:
         log_path = Path(log_path)
 
@@ -66,12 +66,12 @@ def restore_open_positions(log_path=None) -> int:
 def cleanup_invalid_positions() -> None:
     """
     Close positions where TP is on the wrong side of entry — called once on startup.
-    Fetches current market price and closes at that price for accurate P&L.
+    Calculates P&L directly from position data; does not rely on in-memory portfolio
+    state which is empty after a process restart.
     """
     try:
         from execution.paper_trader import _open_orders
         from execution.ccxt_client import get_current_price
-        from risk.portfolio import close_position
         from monitoring.telegram_alerts import _send
         from monitoring.logger import log_trade
 
@@ -79,6 +79,7 @@ def cleanup_invalid_positions() -> None:
             action = pos.get("action", "BUY").upper()
             entry  = float(pos.get("entry_price", 0.0))
             tp     = float(pos.get("tp_price", 0.0))
+            qty    = float(pos.get("quantity", 0.0))
             pair   = pos.get("pair", "")
 
             bad = (
@@ -92,14 +93,18 @@ def cleanup_invalid_positions() -> None:
             if current <= 0:
                 current = entry  # fallback if price fetch fails
 
+            # Calculate P&L directly — portfolio._state["open_positions"] is empty on restart
+            if action in ("BUY", "LONG"):
+                pnl = round((current - entry) * qty, 2)
+            else:
+                pnl = round((entry - current) * qty, 2)
+            sign = "+" if pnl >= 0 else ""
+
             logger.warning(
-                "Invalid position on startup: %s %s entry=%.2f TP=%.2f — closing at %.2f",
-                action, pair, entry, tp, current,
+                "Invalid position on startup: %s %s entry=%.2f TP=%.2f — closing at %.2f pnl=%.2f",
+                action, pair, entry, tp, current, pnl,
             )
             _open_orders.pop(oid, None)
-            closed = close_position(pair, current, "INVALID_TP")
-            pnl = closed.get("pnl", 0.0) if closed else 0.0
-            sign = "+" if pnl >= 0 else ""
             _send(
                 f"⚠️ {pair} force-closed\n"
                 f"Invalid TP below entry\n"

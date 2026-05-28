@@ -485,36 +485,35 @@ class TestCleanupInvalidPositions:
         import monitoring.price_monitor as pm
         orders = {position["order_id"]: dict(position)}
         monkeypatch.setattr(pt, "_open_orders", orders)
-        closed_calls = []
+        log_calls = []
         with patch("execution.ccxt_client.get_current_price", return_value=current_price):
-            with patch("risk.portfolio.close_position",
-                       side_effect=lambda pair, price, reason:
-                           closed_calls.append((pair, price, reason)) or
-                           {"pnl": (price - position["entry_price"]) * position["quantity"],
-                            "pnl_pct": 0.0, "win": False}):
-                with patch("monitoring.telegram_alerts._send", return_value=True):
-                    with patch("monitoring.logger.log_trade"):
-                        pm.cleanup_invalid_positions()
-        return closed_calls, orders
+            with patch("monitoring.telegram_alerts._send", return_value=True):
+                with patch("monitoring.logger.log_trade",
+                           side_effect=lambda d: log_calls.append(d)):
+                    pm.cleanup_invalid_positions()
+        return log_calls, orders
 
     def test_closes_buy_with_tp_below_entry(self, monkeypatch):
         pos = _open_position(action="BUY", entry=100.0, sl=97.0, tp=98.0)  # bad TP
-        closed, orders = self._run(monkeypatch, pos, current_price=101.0)
-        assert len(closed) == 1
-        assert closed[0][1] == 101.0        # closed at current price, not entry
-        assert closed[0][2] == "INVALID_TP"
+        logs, orders = self._run(monkeypatch, pos, current_price=101.0)
+        assert len(logs) == 1
+        assert logs[0]["event"] == "position_closed"
+        assert logs[0]["exit_price"] == 101.0   # closed at current price, not entry
+        assert logs[0]["close_reason"] == "INVALID_TP"
+        assert round(logs[0]["pnl"], 4) == round((101.0 - 100.0) * 0.1, 4)
         assert pos["order_id"] not in orders
 
     def test_closes_sell_with_tp_above_entry(self, monkeypatch):
         pos = _open_position(action="SELL", entry=100.0, sl=103.0, tp=102.0)  # bad TP
-        closed, orders = self._run(monkeypatch, pos, current_price=99.0)
-        assert len(closed) == 1
-        assert closed[0][2] == "INVALID_TP"
+        logs, orders = self._run(monkeypatch, pos, current_price=99.0)
+        assert len(logs) == 1
+        assert logs[0]["close_reason"] == "INVALID_TP"
+        assert round(logs[0]["pnl"], 4) == round((100.0 - 99.0) * 0.1, 4)
 
     def test_valid_buy_position_not_closed(self, monkeypatch):
         pos = _open_position(action="BUY", entry=100.0, sl=97.0, tp=106.0)
-        closed, orders = self._run(monkeypatch, pos, current_price=101.0)
-        assert len(closed) == 0
+        logs, orders = self._run(monkeypatch, pos, current_price=101.0)
+        assert len(logs) == 0
         assert pos["order_id"] in orders
 
     def test_fallback_to_entry_when_price_fetch_fails(self, monkeypatch):
@@ -523,13 +522,12 @@ class TestCleanupInvalidPositions:
         pos = _open_position(action="BUY", entry=100.0, sl=97.0, tp=98.0)
         orders = {pos["order_id"]: dict(pos)}
         monkeypatch.setattr(pt, "_open_orders", orders)
-        closed_calls = []
+        log_calls = []
         with patch("execution.ccxt_client.get_current_price", return_value=0.0):
-            with patch("risk.portfolio.close_position",
-                       side_effect=lambda pair, price, reason:
-                           closed_calls.append((pair, price, reason)) or {"pnl": 0.0}):
-                with patch("monitoring.telegram_alerts._send", return_value=True):
-                    with patch("monitoring.logger.log_trade"):
-                        pm.cleanup_invalid_positions()
-        assert len(closed_calls) == 1
-        assert closed_calls[0][1] == 100.0  # falls back to entry price
+            with patch("monitoring.telegram_alerts._send", return_value=True):
+                with patch("monitoring.logger.log_trade",
+                           side_effect=lambda d: log_calls.append(d)):
+                    pm.cleanup_invalid_positions()
+        assert len(log_calls) == 1
+        assert log_calls[0]["exit_price"] == 100.0  # falls back to entry price
+        assert log_calls[0]["pnl"] == 0.0           # entry == exit → zero P&L
