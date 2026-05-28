@@ -41,16 +41,24 @@ async def send_message(text: str) -> bool:
 
 
 def _send(text: str) -> bool:
-    """Synchronous wrapper around send_message for non-async callers."""
+    """Synchronous wrapper — works in both async and non-async contexts.
+
+    Uses get_running_loop() (not get_event_loop()) to detect context safely on
+    Python 3.10+, where get_event_loop() raises when there is no current loop.
+    """
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(send_message(text))
-            return True
-        return loop.run_until_complete(send_message(text))
-    except Exception as e:
-        logger.error("Telegram sync send failed: %s", e)
-        return False
+        loop = asyncio.get_running_loop()
+        # Inside a running event loop (e.g. called from a WebSocket callback):
+        # schedule as a fire-and-forget task and return immediately.
+        loop.create_task(send_message(text))
+        return True
+    except RuntimeError:
+        # No running loop — pure sync context (startup, cron, post-shutdown).
+        try:
+            return asyncio.run(send_message(text))
+        except Exception as e:
+            logger.error("Telegram sync send failed: %s", e)
+            return False
 
 
 # ---------------------------------------------------------------------------
