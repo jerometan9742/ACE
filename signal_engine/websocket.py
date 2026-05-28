@@ -79,7 +79,27 @@ async def _stream_pair_tf(exchange, pair: str, timeframe: str, callback: Callabl
                 retry = 0
                 down_since = None
 
-            _candle_cache.setdefault(pair, {})[timeframe] = [_ohlcv_to_dict(row) for row in ohlcv]
+            live = [_ohlcv_to_dict(row) for row in ohlcv]
+            if live:
+                existing = _candle_cache.setdefault(pair, {}).get(timeframe, [])
+                if not existing:
+                    _candle_cache[pair][timeframe] = live
+                else:
+                    # Merge: update in-progress candle or append closed ones
+                    # WebSocket often returns only the current forming candle —
+                    # preserve the warm-cache history rather than overwriting it
+                    last_live_ts = live[-1]["timestamp"]
+                    if existing[-1]["timestamp"] == last_live_ts:
+                        existing[-1] = live[-1]  # update forming candle in-place
+                    else:
+                        # New candle(s) closed — find insertion point and extend
+                        known_ts = {c["timestamp"] for c in existing}
+                        for c in live:
+                            if c["timestamp"] not in known_ts:
+                                existing.append(c)
+                                known_ts.add(c["timestamp"])
+                        existing = existing[-500:]  # cap history
+                    _candle_cache[pair][timeframe] = existing
 
             latest_ts = ohlcv[-1][0] if ohlcv else None
             if latest_ts and latest_ts != prev_ts:
