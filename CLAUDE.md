@@ -181,7 +181,7 @@ CORRELATION_LIMIT=0.85
 
 ## GitHub
 
-- Repo: TBD (create new repo — do NOT use Fred's repo)
+- Repo: https://github.com/jerometan9742/ACE
 - Branch strategy: `main` = production, `dev` = development
 - Every Claude Code prompt must end with: push to GitHub when done
 - GitHub Actions: Anthropic review action runs on every PR
