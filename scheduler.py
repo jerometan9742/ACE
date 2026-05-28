@@ -288,20 +288,18 @@ def _save_portfolio_state() -> None:
 
 
 def _handle_shutdown(signum, frame) -> None:
-    """SIGTERM / SIGINT handler — clean up and exit gracefully."""
+    """SIGTERM / SIGINT handler — signal streams to stop and return control to run()."""
     global _shutdown_requested
     logger.info("Shutdown signal received (%s)", signum)
     _shutdown_requested = True
 
     from signal_engine.websocket import stop_streams
-    from execution.paper_trader import stop_monitor
-    from monitoring.telegram_alerts import _send
-
     stop_streams()
-    stop_monitor()
-    _save_portfolio_state()
-    _send("<b>ACE Offline</b> — graceful shutdown complete")
-    sys.exit(0)
+    # Do NOT call sys.exit() here — asyncio.run() is still on the call stack.
+    # Calling sys.exit() while the event loop is running cancels all tasks abruptly
+    # and propagates CancelledError, crashing the process. Instead, stop_streams()
+    # sets _running=False; streams exit their while loops, asyncio.run() returns
+    # cleanly, and run() performs the final cleanup.
 
 
 # ---------------------------------------------------------------------------
@@ -318,15 +316,28 @@ def run() -> None:
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT,  _handle_shutdown)
 
-    from monitoring.telegram_alerts import send_startup_alert
-    from execution.paper_trader import start_monitor
+    from monitoring.telegram_alerts import send_startup_alert, _send
+    from execution.paper_trader import start_monitor, stop_monitor
     from signal_engine.websocket import start_streams
 
     send_startup_alert()
     start_monitor()
 
     logger.info("ACE starting — pairs: %s  mode: %s", WATCHLIST, TRADING_MODE)
-    start_streams(_process_candle)  # blocks until stopped
+
+    try:
+        start_streams(_process_candle)  # blocks until _running is False
+    except Exception as exc:
+        logger.error("WebSocket fatal error: %s", exc)
+
+    # Reached after SIGTERM/SIGINT sets _running=False and streams exit cleanly
+    stop_monitor()
+    _save_portfolio_state()
+    try:
+        _send("<b>ACE Offline</b> — graceful shutdown complete")
+    except Exception:
+        pass
+    logger.info("ACE shutdown complete")
 
 
 if __name__ == "__main__":

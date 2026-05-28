@@ -2,6 +2,8 @@
 Description=ACE Intraday Trading Bot
 After=network.target
 Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=3
 
 [Service]
 Type=simple
@@ -11,8 +13,6 @@ EnvironmentFile=/root/ACE/.env
 ExecStart=/root/ACE/venv/bin/python scheduler.py
 Restart=always
 RestartSec=30
-StartLimitIntervalSec=120
-StartLimitBurst=3
 StandardOutput=journal
 StandardError=journal
 
