@@ -280,9 +280,9 @@ def build_report(
         f"  Total P&amp;L: <b>{_fmt_pnl(at['pnl'])}</b> ({_fmt_pct(at['pnl_pct'])})",
         "",
         "<b>🎯 WIN RATE BENCHMARKS</b>",
-        f"  &lt;25% Kill switch  : {'✅ Safe'  if at['win_rate'] >= KILL_SWITCH_WR else '❌ DANGER — activate kill switch'}",
-        f"  33% Breakeven     : {'✅ Above' if at['win_rate'] >= BREAKEVEN_WR    else f\"❌ {BREAKEVEN_WR - at['win_rate']:.1f}pp below\"}",
-        f"  38% Go-live gate  : {'✅ MET'   if at['win_rate'] >= GOLIVE_WR       else f\"⬜ {GOLIVE_WR - at['win_rate']:.1f}pp to go\"}",
+        f"  &lt;25% Kill switch  : {'✅ Safe' if at['win_rate'] >= KILL_SWITCH_WR else '❌ DANGER — activate kill switch'}",
+        "  33% Breakeven     : " + ("✅ Above" if at["win_rate"] >= BREAKEVEN_WR else f"❌ {BREAKEVEN_WR - at['win_rate']:.1f}pp below"),
+        "  38% Go-live gate  : " + ("✅ MET"   if at["win_rate"] >= GOLIVE_WR    else f"⬜ {GOLIVE_WR - at['win_rate']:.1f}pp to go"),
         "",
     ]
 
