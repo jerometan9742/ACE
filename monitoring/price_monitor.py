@@ -14,13 +14,63 @@ _monitor_thread: Optional[threading.Thread] = None
 _monitor_stop = threading.Event()
 
 
+def restore_open_positions(log_path=None) -> int:
+    """
+    Rebuild paper_trader._open_orders from the JSONL trade log after a process restart.
+    Returns the number of positions restored.
+    """
+    import json as _json
+    from pathlib import Path
+
+    if log_path is None:
+        log_path = Path(__file__).resolve().parents[2] / "logs" / "trades.jsonl"
+    else:
+        log_path = Path(log_path)
+
+    try:
+        from execution.paper_trader import _open_orders
+
+        open_pos: dict = {}
+        if log_path.exists():
+            with open(log_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = _json.loads(line)
+                    except _json.JSONDecodeError:
+                        continue
+                    event = row.get("event", "")
+                    oid = row.get("order_id", "")
+                    if event == "order_filled" and oid:
+                        open_pos[oid] = row
+                    elif event == "position_closed" and oid:
+                        open_pos.pop(oid, None)
+
+        count = 0
+        for oid, pos in open_pos.items():
+            if oid not in _open_orders:
+                _open_orders[oid] = pos
+                count += 1
+
+        if count:
+            logger.info("Restored %d open position(s) from trade log", count)
+        return count
+
+    except Exception as exc:
+        logger.error("restore_open_positions failed: %s", exc)
+        return 0
+
+
 def cleanup_invalid_positions() -> None:
     """
     Close positions where TP is on the wrong side of entry — called once on startup.
-    Catches the case where a bad order slipped through before TP validation was added.
+    Fetches current market price and closes at that price for accurate P&L.
     """
     try:
         from execution.paper_trader import _open_orders
+        from execution.ccxt_client import get_current_price
         from risk.portfolio import close_position
         from monitoring.telegram_alerts import _send
         from monitoring.logger import log_trade
@@ -38,17 +88,31 @@ def cleanup_invalid_positions() -> None:
             if not bad:
                 continue
 
+            current = get_current_price(pair)
+            if current <= 0:
+                current = entry  # fallback if price fetch fails
+
             logger.warning(
-                "Invalid position on startup: %s %s entry=%.2f TP=%.2f — closing",
-                action, pair, entry, tp,
+                "Invalid position on startup: %s %s entry=%.2f TP=%.2f — closing at %.2f",
+                action, pair, entry, tp, current,
             )
             _open_orders.pop(oid, None)
-            close_position(pair, entry, "INVALID_TP")
+            closed = close_position(pair, current, "INVALID_TP")
+            pnl = closed.get("pnl", 0.0) if closed else 0.0
+            sign = "+" if pnl >= 0 else ""
             _send(
-                f"⚠️ {pair} — invalid position closed on startup (bad TP)\n"
-                f"Action {action}  Entry ${entry:,.2f}  TP ${tp:,.2f}"
+                f"⚠️ {pair} force-closed\n"
+                f"Invalid TP below entry\n"
+                f"Entry: ${entry:,.2f} → Exit: ${current:,.2f}\n"
+                f"P&L: {sign}${pnl:.2f}"
             )
-            log_trade({**pos, "event": "position_closed", "close_reason": "INVALID_TP", "pnl": 0.0})
+            log_trade({
+                **pos,
+                "event": "position_closed",
+                "close_reason": "INVALID_TP",
+                "exit_price": current,
+                "pnl": pnl,
+            })
 
     except Exception as exc:
         logger.error("cleanup_invalid_positions failed: %s", exc)
@@ -176,6 +240,7 @@ def check_positions() -> None:
 
 
 def _monitor_loop() -> None:
+    restore_open_positions()
     cleanup_invalid_positions()
     while not _monitor_stop.is_set():
         check_positions()

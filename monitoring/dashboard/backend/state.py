@@ -217,7 +217,24 @@ def sync_from_portfolio() -> None:
     except Exception:
         pass
 
-    # Mirror primary pair's AMD phase into pair_phases for AMD Radar tab
-    with _lock:
-        _state["pair_phases"]["BTC/USDT"]["phase"] = _state["amd_phase"]
-        _state["pair_phases"]["BTC/USDT"]["confluence_score"] = _state["confluence_score"]
+    # --- AMD phase from shared file written by bot process ---
+    try:
+        amd_path = Path(__file__).resolve().parents[3] / "logs" / "amd_state.json"
+        if amd_path.exists():
+            with open(amd_path) as f:
+                amd_file = _json.load(f)
+            with _lock:
+                for pair, data in amd_file.items():
+                    phase = data.get("phase", "UNKNOWN").upper()
+                    conf  = data.get("confluence_score", 0)
+                    if pair in _state["pair_phases"]:
+                        _state["pair_phases"][pair]["phase"] = phase
+                        _state["pair_phases"][pair]["confluence_score"] = conf
+                # Primary pair drives top-level fields
+                watchlist = [p.strip() for p in os.getenv("WATCHLIST", "BTC/USDT,ETH/USDT,SOL/USDT").split(",")]
+                primary = watchlist[0] if watchlist else "BTC/USDT"
+                if primary in amd_file:
+                    _state["amd_phase"] = amd_file[primary].get("phase", "UNKNOWN").upper()
+                    _state["confluence_score"] = amd_file[primary].get("confluence_score", 0)
+    except Exception:
+        pass

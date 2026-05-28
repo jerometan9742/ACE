@@ -26,6 +26,7 @@ _PAPER_BALANCE = float(os.getenv("PAPER_BALANCE", "10000"))
 
 # File written on shutdown — monkeypatch this in tests
 _STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "portfolio_state.json")
+_AMD_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "amd_state.json")
 
 # Per-pair last-known session name — used to detect transitions
 _session_state: Dict[str, Optional[str]] = {pair: None for pair in WATCHLIST}
@@ -101,6 +102,26 @@ def _run_analysis(pair: str, candles: list) -> None:
         bos_data=bos_data, judas_data=judas_data, volume_data=volume_data,
     )
     score = conf_result.get("score", 0)
+
+    # Persist AMD phase for dashboard process to read
+    try:
+        import json as _json
+        _amd_entry = {
+            "phase": amd_data.get("phase", "unknown").upper(),
+            "confidence": amd_data.get("confidence", 0.0),
+            "confluence_score": score,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        _current_amd: dict = {}
+        if os.path.exists(_AMD_STATE_FILE):
+            with open(_AMD_STATE_FILE) as _f:
+                _current_amd = _json.load(_f)
+        _current_amd[pair] = _amd_entry
+        os.makedirs(os.path.dirname(_AMD_STATE_FILE), exist_ok=True)
+        with open(_AMD_STATE_FILE, "w") as _f:
+            _json.dump(_current_amd, _f)
+    except Exception:
+        pass
 
     from monitoring.logger import log_signal
     log_signal(pair, score, score >= _CONFLUENCE_MIN, conf_result.get("breakdown", {}))

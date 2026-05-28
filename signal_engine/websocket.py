@@ -147,10 +147,26 @@ async def _stream_pair_tf(exchange, pair: str, timeframe: str, callback: Callabl
         await _cancellable_sleep(wait)
 
 
+async def _warm_cache() -> None:
+    """Pre-populate candle cache via REST so signal engine has data immediately on startup."""
+    try:
+        from execution.ccxt_client import get_ohlcv
+        for pair in WATCHLIST:
+            for tf in TIMEFRAMES:
+                candles = get_ohlcv(pair, tf, limit=100)
+                if candles:
+                    _candle_cache.setdefault(pair, {})[tf] = candles
+                    logger.info("Warm cache: %s %s — %d candles loaded", pair, tf, len(candles))
+    except Exception as exc:
+        logger.error("_warm_cache failed: %s", exc)
+
+
 async def _run_all(callback: Callable) -> None:
     """Launch all pair × timeframe streams concurrently with graceful shutdown."""
     global _exchange
     _exchange = await _build_exchange()
+
+    await _warm_cache()
 
     tasks = [
         asyncio.create_task(

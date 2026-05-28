@@ -404,3 +404,132 @@ class TestCcxtClientLiveGuard:
         urls = created_kwargs.get("urls", {}).get("api", {})
         assert "testnet.binance.vision" in urls.get("public", "")
         cc._reset_exchange_for_testing()
+
+
+# ---------------------------------------------------------------------------
+# restore_open_positions
+# ---------------------------------------------------------------------------
+
+class TestRestoreOpenPositions:
+    def _write_jsonl(self, tmp_path, rows):
+        import json
+        log = tmp_path / "trades.jsonl"
+        log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+        return log
+
+    def test_restores_filled_order(self, tmp_path, monkeypatch):
+        import execution.paper_trader as pt
+        import monitoring.price_monitor as pm
+        orders = {}
+        monkeypatch.setattr(pt, "_open_orders", orders)
+        log = self._write_jsonl(tmp_path, [
+            {"event": "order_filled", "order_id": "abc123", "pair": "BTC/USDT",
+             "entry_price": 100.0, "sl_price": 97.0, "tp_price": 106.0},
+        ])
+        count = pm.restore_open_positions(log_path=log)
+        assert count == 1
+        assert "abc123" in orders
+
+    def test_skips_closed_order(self, tmp_path, monkeypatch):
+        import execution.paper_trader as pt
+        import monitoring.price_monitor as pm
+        orders = {}
+        monkeypatch.setattr(pt, "_open_orders", orders)
+        log = self._write_jsonl(tmp_path, [
+            {"event": "order_filled", "order_id": "abc123", "pair": "BTC/USDT",
+             "entry_price": 100.0, "sl_price": 97.0, "tp_price": 106.0},
+            {"event": "position_closed", "order_id": "abc123"},
+        ])
+        count = pm.restore_open_positions(log_path=log)
+        assert count == 0
+        assert "abc123" not in orders
+
+    def test_skips_already_tracked_order(self, tmp_path, monkeypatch):
+        import execution.paper_trader as pt
+        import monitoring.price_monitor as pm
+        existing = {"abc123": {"pair": "BTC/USDT"}}
+        monkeypatch.setattr(pt, "_open_orders", existing)
+        log = self._write_jsonl(tmp_path, [
+            {"event": "order_filled", "order_id": "abc123", "pair": "BTC/USDT",
+             "entry_price": 100.0, "sl_price": 97.0, "tp_price": 106.0},
+        ])
+        count = pm.restore_open_positions(log_path=log)
+        assert count == 0
+
+    def test_returns_zero_when_log_missing(self, tmp_path, monkeypatch):
+        import execution.paper_trader as pt
+        import monitoring.price_monitor as pm
+        monkeypatch.setattr(pt, "_open_orders", {})
+        count = pm.restore_open_positions(log_path=tmp_path / "nonexistent.jsonl")
+        assert count == 0
+
+    def test_ignores_malformed_lines(self, tmp_path, monkeypatch):
+        import execution.paper_trader as pt
+        import monitoring.price_monitor as pm
+        orders = {}
+        monkeypatch.setattr(pt, "_open_orders", orders)
+        log = tmp_path / "trades.jsonl"
+        log.write_text('not-json\n{"event":"order_filled","order_id":"x1","pair":"BTC/USDT","entry_price":100.0}\n')
+        count = pm.restore_open_positions(log_path=log)
+        assert count == 1
+        assert "x1" in orders
+
+
+# ---------------------------------------------------------------------------
+# cleanup_invalid_positions (updated — closes at current price)
+# ---------------------------------------------------------------------------
+
+class TestCleanupInvalidPositions:
+    def _run(self, monkeypatch, position, current_price):
+        import execution.paper_trader as pt
+        import monitoring.price_monitor as pm
+        orders = {position["order_id"]: dict(position)}
+        monkeypatch.setattr(pt, "_open_orders", orders)
+        closed_calls = []
+        with patch("execution.ccxt_client.get_current_price", return_value=current_price):
+            with patch("risk.portfolio.close_position",
+                       side_effect=lambda pair, price, reason:
+                           closed_calls.append((pair, price, reason)) or
+                           {"pnl": (price - position["entry_price"]) * position["quantity"],
+                            "pnl_pct": 0.0, "win": False}):
+                with patch("monitoring.telegram_alerts._send", return_value=True):
+                    with patch("monitoring.logger.log_trade"):
+                        pm.cleanup_invalid_positions()
+        return closed_calls, orders
+
+    def test_closes_buy_with_tp_below_entry(self, monkeypatch):
+        pos = _open_position(action="BUY", entry=100.0, sl=97.0, tp=98.0)  # bad TP
+        closed, orders = self._run(monkeypatch, pos, current_price=101.0)
+        assert len(closed) == 1
+        assert closed[0][1] == 101.0        # closed at current price, not entry
+        assert closed[0][2] == "INVALID_TP"
+        assert pos["order_id"] not in orders
+
+    def test_closes_sell_with_tp_above_entry(self, monkeypatch):
+        pos = _open_position(action="SELL", entry=100.0, sl=103.0, tp=102.0)  # bad TP
+        closed, orders = self._run(monkeypatch, pos, current_price=99.0)
+        assert len(closed) == 1
+        assert closed[0][2] == "INVALID_TP"
+
+    def test_valid_buy_position_not_closed(self, monkeypatch):
+        pos = _open_position(action="BUY", entry=100.0, sl=97.0, tp=106.0)
+        closed, orders = self._run(monkeypatch, pos, current_price=101.0)
+        assert len(closed) == 0
+        assert pos["order_id"] in orders
+
+    def test_fallback_to_entry_when_price_fetch_fails(self, monkeypatch):
+        import execution.paper_trader as pt
+        import monitoring.price_monitor as pm
+        pos = _open_position(action="BUY", entry=100.0, sl=97.0, tp=98.0)
+        orders = {pos["order_id"]: dict(pos)}
+        monkeypatch.setattr(pt, "_open_orders", orders)
+        closed_calls = []
+        with patch("execution.ccxt_client.get_current_price", return_value=0.0):
+            with patch("risk.portfolio.close_position",
+                       side_effect=lambda pair, price, reason:
+                           closed_calls.append((pair, price, reason)) or {"pnl": 0.0}):
+                with patch("monitoring.telegram_alerts._send", return_value=True):
+                    with patch("monitoring.logger.log_trade"):
+                        pm.cleanup_invalid_positions()
+        assert len(closed_calls) == 1
+        assert closed_calls[0][1] == 100.0  # falls back to entry price
