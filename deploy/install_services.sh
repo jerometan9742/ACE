@@ -26,6 +26,11 @@ systemctl start ace-frontend.service
 # Add watchdog to cron (every 10 min)
 (crontab -l 2>/dev/null; echo "*/10 * * * * /root/ACE/monitoring/watchdog.sh >> /root/ACE/logs/watchdog.log 2>&1") | crontab -
 
+# Add weekly report cron (Monday 01:00 UTC = 09:00 SGT)
+if ! crontab -l 2>/dev/null | grep -q "weekly_report.py"; then
+    (crontab -l 2>/dev/null; echo "0 1 * * 1 /root/ACE/venv/bin/python /root/ACE/monitoring/weekly_report.py >> /root/ACE/logs/weekly_report.log 2>&1") | crontab -
+fi
+
 # Install logrotate config
 cp /root/ACE/deploy/logrotate_ace /etc/logrotate.d/ace
 
