@@ -70,7 +70,7 @@ class TestTradingModeGuard:
         import execution.paper_trader as pt
         import execution.ccxt_client as cc
         monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
-        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange())
+        monkeypatch.setattr(cc, "_data_exchange_instance", _mock_exchange())
         with patch("risk.portfolio.update_position"):
             with patch("monitoring.telegram_alerts._send", return_value=True):
                 with patch("monitoring.logger.log_trade"):
@@ -87,7 +87,7 @@ class TestPaperOrderPlacement:
         import execution.paper_trader as pt
         import execution.ccxt_client as cc
         monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
-        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange(price))
+        monkeypatch.setattr(cc, "_data_exchange_instance", _mock_exchange(price))
         decision = {**BASE_DECISION, **decision_overrides}
         with patch("risk.portfolio.update_position"):
             with patch("monitoring.telegram_alerts._send", return_value=True):
@@ -119,7 +119,7 @@ class TestPaperOrderPlacement:
         import execution.paper_trader as pt
         import execution.ccxt_client as cc
         monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
-        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange())
+        monkeypatch.setattr(cc, "_data_exchange_instance", _mock_exchange())
         sent = []
         with patch("risk.portfolio.update_position"):
             with patch("monitoring.telegram_alerts._send", side_effect=lambda t: sent.append(t) or True):
@@ -131,7 +131,7 @@ class TestPaperOrderPlacement:
         import execution.paper_trader as pt
         import execution.ccxt_client as cc
         monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
-        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange())
+        monkeypatch.setattr(cc, "_data_exchange_instance", _mock_exchange())
         monkeypatch.setattr(pt, "_open_orders", {})
         with patch("risk.portfolio.update_position"):
             with patch("monitoring.telegram_alerts._send", return_value=True):
@@ -240,7 +240,7 @@ class TestTPValidation:
         import execution.paper_trader as pt
         import execution.ccxt_client as cc
         monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
-        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange(100.0))
+        monkeypatch.setattr(cc, "_data_exchange_instance", _mock_exchange(100.0))
         # fill price = 100, tp = 95 — TP below entry for BUY → reject
         with patch("monitoring.telegram_alerts._send", return_value=True):
             with patch("monitoring.logger.log_trade"):
@@ -252,7 +252,7 @@ class TestTPValidation:
         import execution.paper_trader as pt
         import execution.ccxt_client as cc
         monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
-        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange(100.0))
+        monkeypatch.setattr(cc, "_data_exchange_instance", _mock_exchange(100.0))
         # tp == fill_price — also invalid
         with patch("monitoring.telegram_alerts._send", return_value=True):
             with patch("monitoring.logger.log_trade"):
@@ -264,7 +264,7 @@ class TestTPValidation:
         import execution.paper_trader as pt
         import execution.ccxt_client as cc
         monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
-        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange(100.0))
+        monkeypatch.setattr(cc, "_data_exchange_instance", _mock_exchange(100.0))
         # fill price = 100, tp = 105 — TP above entry for SELL → reject
         sell_decision = {**BASE_DECISION, "action": "SELL"}
         with patch("monitoring.telegram_alerts._send", return_value=True):
@@ -277,7 +277,7 @@ class TestTPValidation:
         import execution.paper_trader as pt
         import execution.ccxt_client as cc
         monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
-        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange(100.0))
+        monkeypatch.setattr(cc, "_data_exchange_instance", _mock_exchange(100.0))
         # tp=106 > entry=100 — valid
         with patch("risk.portfolio.update_position"):
             with patch("monitoring.telegram_alerts._send", return_value=True):
@@ -289,7 +289,7 @@ class TestTPValidation:
         import execution.paper_trader as pt
         import execution.ccxt_client as cc
         monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
-        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange(100.0))
+        monkeypatch.setattr(cc, "_data_exchange_instance", _mock_exchange(100.0))
         # tp=94 < entry=100 — valid for SELL
         sell_decision = {**BASE_DECISION, "action": "SELL"}
         with patch("risk.portfolio.update_position"):

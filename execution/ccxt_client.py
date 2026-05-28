@@ -17,6 +17,7 @@ _TESTNET_SECRET = os.getenv("BINANCE_TESTNET_SECRET", "")
 _LIVE_CONFIRMED = os.getenv("LIVE_CONFIRMED", "false").lower() == "true"
 
 _exchange_instance = None
+_data_exchange_instance = None  # mainnet read-only, used for all price data
 
 
 def _guard_live_mode() -> None:
@@ -72,10 +73,33 @@ def get_exchange():
     return exchange
 
 
+def _get_data_exchange():
+    """Return a cached Binance mainnet exchange for read-only market data (no auth needed).
+
+    Always uses mainnet regardless of TRADING_MODE — Binance testnet is unreliable and
+    we only need real price data for paper trading simulation.
+    """
+    global _data_exchange_instance
+    if _data_exchange_instance is not None:
+        return _data_exchange_instance
+
+    import ccxt  # deferred — not required at import time
+
+    _data_exchange_instance = ccxt.binance({"options": {"defaultType": "spot"}})
+    logger.info("CCXT data exchange connected to Binance mainnet (read-only)")
+    return _data_exchange_instance
+
+
 def _reset_exchange_for_testing() -> None:
     """Clear cached exchange instance for test isolation."""
     global _exchange_instance
     _exchange_instance = None
+
+
+def _reset_data_exchange_for_testing() -> None:
+    """Clear cached data exchange instance for test isolation."""
+    global _data_exchange_instance
+    _data_exchange_instance = None
 
 
 def get_balance() -> dict:
@@ -95,9 +119,9 @@ def get_balance() -> dict:
 
 
 def get_current_price(pair: str) -> float:
-    """Return the latest ticker price for pair. Returns 0.0 on error."""
+    """Return the latest ticker price for pair from Binance mainnet. Returns 0.0 on error."""
     try:
-        ticker = get_exchange().fetch_ticker(pair)
+        ticker = _get_data_exchange().fetch_ticker(pair)
         return float(ticker.get("last", 0.0))
     except Exception as exc:
         logger.error("get_current_price(%s) failed: %s", pair, exc)
@@ -105,9 +129,9 @@ def get_current_price(pair: str) -> float:
 
 
 def get_order_book(pair: str, limit: int = 20) -> dict:
-    """Return {bids, asks, timestamp} for pair."""
+    """Return {bids, asks, timestamp} for pair from Binance mainnet."""
     try:
-        ob = get_exchange().fetch_order_book(pair, limit=limit)
+        ob = _get_data_exchange().fetch_order_book(pair, limit=limit)
         return {
             "bids": ob.get("bids", []),
             "asks": ob.get("asks", []),
@@ -119,9 +143,9 @@ def get_order_book(pair: str, limit: int = 20) -> dict:
 
 
 def get_ohlcv(pair: str, timeframe: str, limit: int = 100) -> List[dict]:
-    """Return list of {timestamp, open, high, low, close, volume} candle dicts."""
+    """Return list of {timestamp, open, high, low, close, volume} candle dicts from Binance mainnet."""
     try:
-        raw = get_exchange().fetch_ohlcv(pair, timeframe, limit=limit)
+        raw = _get_data_exchange().fetch_ohlcv(pair, timeframe, limit=limit)
         return [
             {"timestamp": r[0], "open": r[1], "high": r[2],
              "low": r[3], "close": r[4], "volume": r[5]}
@@ -133,7 +157,7 @@ def get_ohlcv(pair: str, timeframe: str, limit: int = 100) -> List[dict]:
 
 
 def get_atr(pair: str, period: int = 14) -> float:
-    """Calculate ATR(period) from recent 15m OHLCV. Returns 0.0 on error."""
+    """Calculate ATR(period) from recent 15m OHLCV on Binance mainnet. Returns 0.0 on error."""
     try:
         candles = get_ohlcv(pair, "15m", limit=period + 1)
         if len(candles) < period + 1:

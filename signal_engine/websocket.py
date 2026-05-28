@@ -37,19 +37,15 @@ def _ohlcv_to_dict(row: List) -> Dict:
 
 
 async def _build_exchange():
-    """Instantiate and return the CCXT Pro exchange, switching to sandbox for paper mode."""
+    """Instantiate Binance mainnet exchange for WebSocket market data (read-only, no auth).
+
+    Binance testnet is unreliable for WebSocket — it sends code 1008 and drops all
+    streams simultaneously. For paper trading we only need real price data, not testnet
+    execution. Paper order simulation is handled entirely in paper_trader.py.
+    """
     import ccxt.pro as ccxtpro  # noqa: PLC0415 — deferred to avoid hard dep at import time
 
-    params: Dict = {}
-    if TRADING_MODE == "paper" and EXCHANGE_ID == "binance":
-        params["options"] = {"defaultType": "future"}
-
-    exchange_class = getattr(ccxtpro, EXCHANGE_ID)
-    exchange = exchange_class(params)
-
-    if TRADING_MODE == "paper":
-        exchange.set_sandbox_mode(True)
-
+    exchange = ccxtpro.binance({"options": {"defaultType": "spot"}})
     return exchange
 
 
@@ -161,12 +157,19 @@ async def _warm_cache() -> None:
         logger.error("_warm_cache failed: %s", exc)
 
 
-async def _run_all(callback: Callable) -> None:
+async def _run_all(callback: Callable, is_restart: bool = False) -> None:
     """Launch all pair × timeframe streams concurrently with graceful shutdown."""
     global _exchange
     _exchange = await _build_exchange()
 
     await _warm_cache()
+
+    if is_restart:
+        try:
+            from monitoring.telegram_alerts import _send
+            _send("✅ ACE streams restored\nBTC/ETH/SOL WebSocket reconnected")
+        except Exception:
+            pass
 
     tasks = [
         asyncio.create_task(
@@ -188,11 +191,14 @@ async def _run_all(callback: Callable) -> None:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         if _exchange:
-            await _exchange.close()
+            try:
+                await _exchange.close()
+            except Exception:
+                pass
             _exchange = None
 
 
-def start_streams(callback: Callable) -> None:
+def start_streams(callback: Callable, is_restart: bool = False) -> None:
     """
     Start WebSocket streams for all WATCHLIST pairs on 1m/5m/15m.
     Calls callback(signal_dict) on each candle close.
@@ -200,7 +206,7 @@ def start_streams(callback: Callable) -> None:
     """
     global _running
     _running = True
-    asyncio.run(_run_all(callback))
+    asyncio.run(_run_all(callback, is_restart=is_restart))
 
 
 def stop_streams() -> None:

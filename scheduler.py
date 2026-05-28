@@ -337,7 +337,7 @@ def run() -> None:
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT,  _handle_shutdown)
 
-    from monitoring.telegram_alerts import send_startup_alert, send_message
+    from monitoring.telegram_alerts import send_startup_alert, send_message, _send
     from monitoring.price_monitor import start_price_monitor, stop_price_monitor
     from signal_engine.websocket import start_streams
     import asyncio as _asyncio
@@ -347,12 +347,38 @@ def run() -> None:
 
     logger.info("ACE starting — pairs: %s  mode: %s", WATCHLIST, TRADING_MODE)
 
-    try:
-        start_streams(_process_candle)  # blocks until _running is False
-    except Exception as exc:
-        logger.error("WebSocket fatal error: %s", exc)
+    _is_restart = False
+    while not _shutdown_requested:
+        try:
+            start_streams(_process_candle, is_restart=_is_restart)
+        except _asyncio.CancelledError:
+            if _shutdown_requested:
+                break
+            logger.error("CancelledError in stream loop — restarting streams in 10s")
+            _send(
+                "⚠️ ACE stream restart\n"
+                "Reason: WebSocket dropped (code 1008)\n"
+                "Restarting in 10s..."
+            )
+            time.sleep(10)
+            _is_restart = True
+            continue
+        except Exception as exc:
+            if _shutdown_requested:
+                break
+            logger.error("WebSocket error — restarting streams in 10s: %s", exc)
+            _send(
+                f"⚠️ ACE stream restart\n"
+                f"Reason: {exc}\n"
+                f"Restarting in 10s..."
+            )
+            time.sleep(10)
+            _is_restart = True
+            continue
+        # start_streams returned without exception = clean shutdown (_shutdown_requested)
+        break
 
-    # Reached after SIGTERM/SIGINT sets _running=False and streams exit cleanly.
+    # Reached after shutdown signal stops the streams.
     # asyncio.run() is now closed — use a fresh run() for the final Telegram send.
     stop_price_monitor()
     _save_portfolio_state()
