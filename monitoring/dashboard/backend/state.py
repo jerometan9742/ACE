@@ -135,31 +135,79 @@ def add_log(level: str, message: str) -> None:
             _state["mission_log"] = _state["mission_log"][-50:]
 
 
+_last_price_fetch: float = 0.0
+
+
 def sync_from_portfolio() -> None:
-    """Pull live data from the portfolio and price modules if the bot is running."""
+    """
+    Pull live data from the JSONL trade log and services.
+    Reading from disk (not from risk.portfolio in-memory) so this works correctly
+    even though the dashboard runs in a separate process from the bot.
+    """
+    import json as _json
+    import time as _time
+    from pathlib import Path
+
+    # --- Reconstruct open positions and daily P&L from trade log ---
     try:
-        from risk.portfolio import get_portfolio_state
-        portfolio = get_portfolio_state()
-        equity = portfolio.get("equity", 10000.0)
+        log_path = Path(__file__).resolve().parents[3] / "logs" / "trades.jsonl"
+        open_pos: dict = {}
+        daily_pnl = 0.0
+        trades_today = 0
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        if log_path.exists():
+            with open(log_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = _json.loads(line)
+                    except _json.JSONDecodeError:
+                        continue
+                    event = row.get("event", "")
+                    oid   = row.get("order_id", "")
+                    ts    = str(row.get("ts", ""))[:10]
+
+                    if event == "order_filled" and oid:
+                        open_pos[oid] = row
+                        if ts == today:
+                            trades_today += 1
+                    elif event == "position_closed" and oid:
+                        open_pos.pop(oid, None)
+                        if ts == today:
+                            daily_pnl += float(row.get("pnl", 0.0))
+
         initial = float(os.getenv("PAPER_BALANCE", "10000"))
-        daily_pnl = portfolio.get("daily_pnl", 0.0)
         with _lock:
-            _state["equity"] = equity
-            _state["daily_pnl"] = daily_pnl
-            _state["daily_pnl_pct"] = (daily_pnl / initial * 100) if initial > 0 else 0.0
-            _state["trades_today"] = portfolio.get("trades_today", 0)
-            _state["trades_this_session"] = portfolio.get("trades_this_session", 0)
-            _state["open_positions"] = portfolio.get("open_positions", [])
+            _state["open_positions"] = list(open_pos.values())
+            _state["daily_pnl"] = round(daily_pnl, 2)
+            _state["daily_pnl_pct"] = round(daily_pnl / initial * 100, 4) if initial > 0 else 0.0
+            _state["trades_today"] = trades_today
     except Exception:
         pass
 
+    # --- Current prices via REST (cached — max one fetch per 10s) ---
+    global _last_price_fetch
     try:
-        from risk.risk_gate import is_kill_switch_active
-        with _lock:
-            _state["kill_switch_active"] = is_kill_switch_active()
+        now = _time.time()
+        if now - _last_price_fetch >= 10:
+            from execution.ccxt_client import get_current_price
+            watchlist = [p.strip() for p in os.getenv("WATCHLIST", "BTC/USDT,ETH/USDT,SOL/USDT").split(",")]
+            prices = {}
+            for pair in watchlist:
+                p = get_current_price(pair)
+                if p > 0:
+                    prices[pair] = p
+            if prices:
+                with _lock:
+                    _state["prices"].update(prices)
+            _last_price_fetch = now
     except Exception:
         pass
 
+    # --- Session ---
     try:
         from signal_engine.session import get_current_session
         sess = get_current_session()

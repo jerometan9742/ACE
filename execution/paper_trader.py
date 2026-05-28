@@ -72,6 +72,17 @@ def place_order(
         if fill_price <= 0:
             fill_price = price
 
+        # Validate TP is on the correct side of the actual fill price
+        side_upper = side.upper()
+        if side_upper in ("BUY", "LONG") and tp_price <= fill_price:
+            raise ValueError(
+                f"BUY rejected: TP {tp_price:.2f} <= entry {fill_price:.2f}"
+            )
+        if side_upper in ("SELL", "SHORT") and tp_price >= fill_price:
+            raise ValueError(
+                f"SELL rejected: TP {tp_price:.2f} >= entry {fill_price:.2f}"
+            )
+
         order = {
             "order_id": order_id,
             "pair": pair,

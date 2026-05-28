@@ -232,6 +232,145 @@ class TestPositionMonitor:
 
 
 # ---------------------------------------------------------------------------
+# TP/SL validation in place_order
+# ---------------------------------------------------------------------------
+
+class TestTPValidation:
+    def test_buy_with_tp_below_entry_is_rejected(self, monkeypatch):
+        import execution.paper_trader as pt
+        import execution.ccxt_client as cc
+        monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
+        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange(100.0))
+        # fill price = 100, tp = 95 — TP below entry for BUY → reject
+        with patch("monitoring.telegram_alerts._send", return_value=True):
+            with patch("monitoring.logger.log_trade"):
+                result = pt.place_order("BTC/USDT", "BUY", 0.01, 100.0, 97.0, 95.0, BASE_DECISION)
+        assert result["status"] == "failed"
+        assert "BUY rejected" in result.get("error", "")
+
+    def test_buy_with_tp_equal_to_entry_is_rejected(self, monkeypatch):
+        import execution.paper_trader as pt
+        import execution.ccxt_client as cc
+        monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
+        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange(100.0))
+        # tp == fill_price — also invalid
+        with patch("monitoring.telegram_alerts._send", return_value=True):
+            with patch("monitoring.logger.log_trade"):
+                result = pt.place_order("BTC/USDT", "BUY", 0.01, 100.0, 97.0, 100.0, BASE_DECISION)
+        assert result["status"] == "failed"
+        assert "BUY rejected" in result.get("error", "")
+
+    def test_sell_with_tp_above_entry_is_rejected(self, monkeypatch):
+        import execution.paper_trader as pt
+        import execution.ccxt_client as cc
+        monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
+        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange(100.0))
+        # fill price = 100, tp = 105 — TP above entry for SELL → reject
+        sell_decision = {**BASE_DECISION, "action": "SELL"}
+        with patch("monitoring.telegram_alerts._send", return_value=True):
+            with patch("monitoring.logger.log_trade"):
+                result = pt.place_order("BTC/USDT", "SELL", 0.01, 100.0, 103.0, 105.0, sell_decision)
+        assert result["status"] == "failed"
+        assert "SELL rejected" in result.get("error", "")
+
+    def test_valid_buy_is_accepted(self, monkeypatch):
+        import execution.paper_trader as pt
+        import execution.ccxt_client as cc
+        monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
+        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange(100.0))
+        # tp=106 > entry=100 — valid
+        with patch("risk.portfolio.update_position"):
+            with patch("monitoring.telegram_alerts._send", return_value=True):
+                with patch("monitoring.logger.log_trade"):
+                    result = pt.place_order("BTC/USDT", "BUY", 0.01, 100.0, 97.0, 106.0, BASE_DECISION)
+        assert result["status"] == "filled"
+
+    def test_valid_sell_is_accepted(self, monkeypatch):
+        import execution.paper_trader as pt
+        import execution.ccxt_client as cc
+        monkeypatch.setattr(pt, "_TRADING_MODE", "paper")
+        monkeypatch.setattr(cc, "get_exchange", lambda: _mock_exchange(100.0))
+        # tp=94 < entry=100 — valid for SELL
+        sell_decision = {**BASE_DECISION, "action": "SELL"}
+        with patch("risk.portfolio.update_position"):
+            with patch("monitoring.telegram_alerts._send", return_value=True):
+                with patch("monitoring.logger.log_trade"):
+                    result = pt.place_order("BTC/USDT", "SELL", 0.01, 100.0, 103.0, 94.0, sell_decision)
+        assert result["status"] == "filled"
+
+
+# ---------------------------------------------------------------------------
+# price_monitor — SL/TP/price-in-range
+# ---------------------------------------------------------------------------
+
+class TestPriceMonitor:
+    def _run(self, monkeypatch, current_price: float, position=None):
+        import execution.paper_trader as pt
+        import monitoring.price_monitor as pm
+        pos = position or _open_position()
+        monkeypatch.setattr(pt, "_open_orders", {"test-order-1": dict(pos)})
+
+        closed_calls = []
+        with patch("execution.ccxt_client.get_current_price", return_value=current_price):
+            with patch("risk.portfolio.close_position",
+                       side_effect=lambda pair, price, reason:
+                           closed_calls.append((pair, price, reason)) or {
+                               "pnl": (price - pos["entry_price"]) * pos["quantity"],
+                               "pnl_pct": 0.0,
+                               "win": price > pos["entry_price"],
+                           }):
+                with patch("monitoring.telegram_alerts._send", return_value=True):
+                    with patch("agents.memory.reflection.reflect", return_value={}):
+                        with patch("agents.memory.reflection.write_lesson"):
+                            with patch("monitoring.logger.log_trade"):
+                                pm.check_positions()
+        return closed_calls
+
+    def test_closes_buy_on_tp_hit(self, monkeypatch):
+        closed = self._run(monkeypatch, current_price=107.0)  # above TP=106
+        assert len(closed) == 1
+        assert closed[0][2] == "TP_HIT"
+
+    def test_closes_buy_on_sl_hit(self, monkeypatch):
+        closed = self._run(monkeypatch, current_price=96.0)   # below SL=97
+        assert len(closed) == 1
+        assert closed[0][2] == "SL_HIT"
+
+    def test_no_close_when_price_between_sl_and_tp(self, monkeypatch):
+        closed = self._run(monkeypatch, current_price=102.0)
+        assert len(closed) == 0
+
+    def test_closes_sell_on_sl_hit(self, monkeypatch):
+        pos = _open_position(action="SELL", entry=100.0, sl=103.0, tp=94.0)
+        closed = self._run(monkeypatch, current_price=104.0, position=pos)
+        assert len(closed) == 1
+        assert closed[0][2] == "SL_HIT"
+
+    def test_closes_sell_on_tp_hit(self, monkeypatch):
+        pos = _open_position(action="SELL", entry=100.0, sl=103.0, tp=94.0)
+        closed = self._run(monkeypatch, current_price=93.0, position=pos)
+        assert len(closed) == 1
+        assert closed[0][2] == "TP_HIT"
+
+    def test_order_removed_from_open_orders_after_close(self, monkeypatch):
+        import execution.paper_trader as pt
+        pos = _open_position()
+        orders = {"test-order-1": dict(pos)}
+        monkeypatch.setattr(pt, "_open_orders", orders)
+        with patch("execution.ccxt_client.get_current_price", return_value=107.0):
+            with patch("risk.portfolio.close_position", return_value={
+                "pnl": 0.7, "pnl_pct": 0.7, "win": True
+            }):
+                with patch("monitoring.telegram_alerts._send", return_value=True):
+                    with patch("agents.memory.reflection.reflect", return_value={}):
+                        with patch("agents.memory.reflection.write_lesson"):
+                            with patch("monitoring.logger.log_trade"):
+                                import monitoring.price_monitor as pm
+                                pm.check_positions()
+        assert "test-order-1" not in orders
+
+
+# ---------------------------------------------------------------------------
 # ccxt_client live-mode guard
 # ---------------------------------------------------------------------------
 

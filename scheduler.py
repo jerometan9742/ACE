@@ -317,12 +317,12 @@ def run() -> None:
     signal.signal(signal.SIGINT,  _handle_shutdown)
 
     from monitoring.telegram_alerts import send_startup_alert, send_message
-    from execution.paper_trader import start_monitor, stop_monitor
+    from monitoring.price_monitor import start_price_monitor, stop_price_monitor
     from signal_engine.websocket import start_streams
     import asyncio as _asyncio
 
     send_startup_alert()
-    start_monitor()
+    start_price_monitor()
 
     logger.info("ACE starting — pairs: %s  mode: %s", WATCHLIST, TRADING_MODE)
 
@@ -333,7 +333,7 @@ def run() -> None:
 
     # Reached after SIGTERM/SIGINT sets _running=False and streams exit cleanly.
     # asyncio.run() is now closed — use a fresh run() for the final Telegram send.
-    stop_monitor()
+    stop_price_monitor()
     _save_portfolio_state()
     try:
         _asyncio.run(send_message("<b>ACE Offline</b> — graceful shutdown complete"))
