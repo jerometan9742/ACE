@@ -195,7 +195,18 @@ def check_positions() -> None:
             _stale_alerted.pop(oid, None)
             closed = close_position(pair, current_price, close_reason)
             if not closed:
-                continue
+                # Portfolio memory is empty after process restart — calculate P&L directly
+                qty = float(pos.get("quantity", 0.0))
+                if action in ("BUY", "LONG"):
+                    raw_pnl = (current_price - entry) * qty
+                else:
+                    raw_pnl = (entry - current_price) * qty
+                cost_basis = entry * qty
+                closed = {
+                    "pnl": round(raw_pnl, 2),
+                    "pnl_pct": round(raw_pnl / cost_basis * 100, 4) if cost_basis > 0 else 0.0,
+                    "win": raw_pnl > 0,
+                }
 
             pnl     = closed.get("pnl", 0.0)
             pnl_pct = closed.get("pnl_pct", 0.0)

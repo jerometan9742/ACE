@@ -476,6 +476,27 @@ class TestStaleAlertAndMaxHold:
         self._run_check(monkeypatch, pos)
         assert oid not in pm._stale_alerted
 
+    def test_close_proceeds_when_portfolio_memory_empty(self, monkeypatch):
+        """close_position() returns {} after restart; check_positions must still close."""
+        import execution.paper_trader as pt
+        import monitoring.price_monitor as pm
+        pm._stale_alerted.clear()
+        pos = self._pos_with_age(hours=9)
+        oid = pos["order_id"]
+        monkeypatch.setattr(pt, "_open_orders", {oid: dict(pos)})
+
+        sent = []
+        with patch("execution.ccxt_client.get_current_price", return_value=102.0):
+            with patch("risk.portfolio.close_position", return_value={}):  # empty = portfolio empty
+                with patch("monitoring.telegram_alerts._send", side_effect=sent.append):
+                    with patch("agents.memory.reflection.reflect", return_value={}):
+                        with patch("agents.memory.reflection.write_lesson"):
+                            with patch("monitoring.logger.log_trade"):
+                                pm.check_positions()
+
+        force_msgs = [m for m in sent if "force-closed" in m]
+        assert len(force_msgs) == 1, "Should still send close message even when portfolio memory is empty"
+
 
 # ---------------------------------------------------------------------------
 # ccxt_client live-mode guard
