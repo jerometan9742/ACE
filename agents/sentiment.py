@@ -89,7 +89,7 @@ Respond ONLY with:
         resp = get_client().messages.create(
             model=MODEL_FAST,
             max_tokens=250,
-            system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
+            system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral", "ttl": 3600}}],
             messages=[{"role": "user", "content": prompt}],
         )
         p = parse_json(resp.content[0].text)
