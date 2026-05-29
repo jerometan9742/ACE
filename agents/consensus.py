@@ -147,7 +147,7 @@ Respond ONLY with:
             system=[{
                 "type": "text",
                 "text": "You are the Consensus Builder for ACE. Provide reasoning and confidence for the supermajority decision. JSON only.",
-                "cache_control": {"type": "ephemeral", "ttl": 3600},
+                "cache_control": {"type": "ephemeral"},
             }],
             messages=[{"role": "user", "content": prompt}],
         )
