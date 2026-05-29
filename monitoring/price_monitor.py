@@ -1,6 +1,7 @@
 """Real-time SL/TP watcher — monitors open positions and closes on SL/TP hit."""
 
 import logging
+import os
 import threading
 from datetime import datetime, timezone
 from typing import Optional
@@ -9,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 15             # seconds between checks
 _MAX_POSITION_AGE_S = 4 * 3600  # 4 hours → stale warning
+_MAX_POSITION_HOURS = int(os.getenv("MAX_POSITION_HOURS", "8"))
+_stale_alerted: dict = {}  # order_id → unix timestamp of last stale alert
 
 _monitor_thread: Optional[threading.Thread] = None
 _monitor_stop = threading.Event()
@@ -163,12 +166,18 @@ def check_positions() -> None:
                 try:
                     opened_dt = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
                     age = (datetime.now(timezone.utc) - opened_dt).total_seconds()
-                    if age > _MAX_POSITION_AGE_S:
-                        _send(
-                            f"<b>Stale Position</b>\n"
-                            f"{pair} open for {age / 3600:.1f}h\n"
-                            f"Entry ${entry:,.2f}  Current ${current:,.2f}"
-                        )
+                    if age > _MAX_POSITION_HOURS * 3600:
+                        close_reason = "MAX_HOLD_TIME"
+                    elif age > _MAX_POSITION_AGE_S:
+                        now_ts = datetime.now(timezone.utc).timestamp()
+                        last_alerted = _stale_alerted.get(oid)
+                        if not last_alerted or (now_ts - last_alerted) >= 3600:
+                            _send(
+                                f"<b>Stale Position</b>\n"
+                                f"{pair} open for {age / 3600:.1f}h\n"
+                                f"Entry ${entry:,.2f}  Current ${current:,.2f}"
+                            )
+                            _stale_alerted[oid] = now_ts
                 except Exception:
                     pass
 
@@ -183,6 +192,7 @@ def check_positions() -> None:
             opened_at = pos.get("timestamp", "")
 
             _open_orders.pop(oid, None)
+            _stale_alerted.pop(oid, None)
             closed = close_position(pair, current_price, close_reason)
             if not closed:
                 continue
@@ -196,12 +206,21 @@ def check_positions() -> None:
             if opened_at:
                 try:
                     opened_dt = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
-                    mins = int((datetime.now(timezone.utc) - opened_dt).total_seconds() / 60)
-                    duration_str = f"{mins}min"
+                    total_secs = (datetime.now(timezone.utc) - opened_dt).total_seconds()
+                    mins = int(total_secs / 60)
+                    duration_str = f"{total_secs / 3600:.1f}h" if mins >= 60 else f"{mins}min"
                 except Exception:
                     pass
 
-            if win:
+            if close_reason == "MAX_HOLD_TIME":
+                msg = (
+                    f"⏱ {pair} force-closed\n"
+                    f"Reason: Max hold time ({_MAX_POSITION_HOURS}h) exceeded\n"
+                    f"Entry: ${entry:,.2f} → Exit: ${current_price:,.2f}\n"
+                    f"P&L: {sign}${pnl:.2f}\n"
+                    f"Duration: {duration_str}"
+                )
+            elif win:
                 msg = (
                     f"✅ {pair} CLOSED — TP hit\n"
                     f"Entry ${entry:,.2f} → Exit ${current_price:,.2f}\n"

@@ -1,6 +1,7 @@
 """Tests for execution layer — paper order placement, SL/TP monitoring, mode guard, Telegram alerts."""
 
 import time
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -37,6 +38,8 @@ def _mock_exchange(price: float = 100.0) -> MagicMock:
 
 
 def _open_position(action="BUY", entry=100.0, sl=97.0, tp=106.0) -> dict:
+    from datetime import timedelta
+    recent_ts = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
     return {
         "order_id": "test-order-1",
         "pair": "BTC/USDT",
@@ -48,7 +51,7 @@ def _open_position(action="BUY", entry=100.0, sl=97.0, tp=106.0) -> dict:
         "tp_price": tp,
         "status": "filled",
         "paper": True,
-        "timestamp": "2024-01-15T08:00:00Z",
+        "timestamp": recent_ts,
         "agent_outputs": {},
         "confidence": 8.0,
         "confluence_score": 8,
@@ -368,6 +371,110 @@ class TestPriceMonitor:
                                 import monitoring.price_monitor as pm
                                 pm.check_positions()
         assert "test-order-1" not in orders
+
+
+# ---------------------------------------------------------------------------
+# Stale alert dedup + max hold time auto-close
+# ---------------------------------------------------------------------------
+
+class TestStaleAlertAndMaxHold:
+    """Tests for stale alert deduplication and MAX_HOLD_TIME auto-close."""
+
+    def _pos_with_age(self, hours: float, action="BUY", oid="test-order-1") -> dict:
+        from datetime import timedelta
+        ts = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        return {
+            "order_id": oid,
+            "pair": "BTC/USDT",
+            "action": action,
+            "side": action.lower(),
+            "quantity": 0.1,
+            "entry_price": 100.0,
+            "sl_price": 50.0,    # far away — won't trigger SL/TP
+            "tp_price": 200.0,
+            "status": "filled",
+            "paper": True,
+            "timestamp": ts,
+            "agent_outputs": {},
+            "confidence": 8.0,
+            "confluence_score": 8,
+        }
+
+    def _run_check(self, monkeypatch, pos, current_price=102.0):
+        import execution.paper_trader as pt
+        import monitoring.price_monitor as pm
+        oid = pos["order_id"]
+        monkeypatch.setattr(pt, "_open_orders", {oid: dict(pos)})
+
+        sent = []
+        closed_calls = []
+        with patch("execution.ccxt_client.get_current_price", return_value=current_price):
+            with patch("risk.portfolio.close_position",
+                       side_effect=lambda pair, price, reason:
+                           closed_calls.append((pair, price, reason)) or {
+                               "pnl": 0.5, "pnl_pct": 0.5, "win": True,
+                           }):
+                with patch("monitoring.telegram_alerts._send", side_effect=sent.append):
+                    with patch("agents.memory.reflection.reflect", return_value={}):
+                        with patch("agents.memory.reflection.write_lesson"):
+                            with patch("monitoring.logger.log_trade"):
+                                pm.check_positions()
+        return sent, closed_calls
+
+    def test_stale_alert_sends_first_time(self, monkeypatch):
+        import monitoring.price_monitor as pm
+        pm._stale_alerted.clear()
+        pos = self._pos_with_age(hours=5)  # 5h old — past 4h stale threshold, under 8h max
+        sent, closed = self._run_check(monkeypatch, pos)
+        assert any("Stale Position" in m for m in sent)
+        assert len(closed) == 0  # not closed, just alerted
+
+    def test_stale_alert_suppressed_within_1hr(self, monkeypatch):
+        import time
+        import monitoring.price_monitor as pm
+        oid = "test-order-1"
+        pm._stale_alerted[oid] = time.time()  # just alerted
+        pos = self._pos_with_age(hours=5)
+        sent, closed = self._run_check(monkeypatch, pos)
+        assert not any("Stale Position" in m for m in sent)
+        pm._stale_alerted.pop(oid, None)
+
+    def test_stale_alert_resends_after_1hr(self, monkeypatch):
+        import time
+        import monitoring.price_monitor as pm
+        oid = "test-order-1"
+        pm._stale_alerted[oid] = time.time() - 3601  # alerted 1hr+ ago
+        pos = self._pos_with_age(hours=5)
+        sent, closed = self._run_check(monkeypatch, pos)
+        assert any("Stale Position" in m for m in sent)
+        pm._stale_alerted.pop(oid, None)
+
+    def test_max_hold_time_triggers_auto_close(self, monkeypatch):
+        import monitoring.price_monitor as pm
+        pm._stale_alerted.clear()
+        pos = self._pos_with_age(hours=9)  # 9h — past 8h max
+        sent, closed = self._run_check(monkeypatch, pos)
+        assert len(closed) == 1
+        assert closed[0][2] == "MAX_HOLD_TIME"
+
+    def test_max_hold_time_telegram_message_format(self, monkeypatch):
+        import monitoring.price_monitor as pm
+        pm._stale_alerted.clear()
+        pos = self._pos_with_age(hours=9)
+        sent, _ = self._run_check(monkeypatch, pos)
+        force_msgs = [m for m in sent if "force-closed" in m]
+        assert len(force_msgs) == 1
+        assert "Max hold time" in force_msgs[0]
+        assert "exceeded" in force_msgs[0]
+
+    def test_stale_alerted_cleaned_up_on_close(self, monkeypatch):
+        import time
+        import monitoring.price_monitor as pm
+        oid = "test-order-1"
+        pm._stale_alerted[oid] = time.time() - 1000  # has an entry
+        pos = self._pos_with_age(hours=9)
+        self._run_check(monkeypatch, pos)
+        assert oid not in pm._stale_alerted
 
 
 # ---------------------------------------------------------------------------
