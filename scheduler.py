@@ -34,6 +34,17 @@ _session_state: Dict[str, Optional[str]] = {pair: None for pair in WATCHLIST}
 # Mutable daily stats (reset at 00:00 UTC)
 _daily_stats: Dict = {"trades": 0, "pnl": 0.0, "wins": 0, "date": ""}
 
+# Rolling funnel counters — reset at each kill zone entry
+_funnel: Dict = {
+    "candles_evaluated": 0,
+    "confluence_computed": 0,
+    "passed_threshold": 0,
+    "agents_fired": 0,
+    "trades_placed": 0,
+    "_last_summary_utc": None,
+}
+_FUNNEL_SUMMARY_INTERVAL = 1800  # 30 minutes
+
 _shutdown_requested = False
 
 
@@ -53,6 +64,9 @@ def _process_candle(signal_data: dict) -> None:
     candles = signal_data.get("candles", [])
     if len(candles) < 20:
         return
+
+    _funnel["candles_evaluated"] += 1
+    _maybe_emit_funnel()
 
     logger.info("Analysis triggered: %s 5m (%d candles)", pair, len(candles))
     try:
@@ -100,6 +114,7 @@ def _run_analysis(pair: str, candles: list) -> None:
         bos_data=bos_data, judas_data=judas_data, volume_data=volume_data,
     )
     score = conf_result.get("score", 0)
+    _funnel["confluence_computed"] += 1
 
     # Persist AMD phase for dashboard process to read
     try:
@@ -134,12 +149,24 @@ def _run_analysis(pair: str, candles: list) -> None:
     if score < _CONFLUENCE_MIN:
         return  # below threshold — no trade
 
+    _funnel["passed_threshold"] += 1
+
     # Session gate: score high enough but outside kill zone — log and skip
     if not sess.is_trading_allowed():
-        logger.info("Confluence %d/10 for %s — outside kill zone, no trade", score, pair)
+        _utc_now = datetime.now(timezone.utc).strftime("%H:%M UTC")
+        logger.info(
+            "[SESSION GATE] %s | %s | current_utc=%s | in_kill_zone=False | blocked=True",
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), pair, _utc_now,
+        )
         return
 
+    logger.info(
+        "[SESSION GATE] %s | %s | current_utc=%s | in_kill_zone=True | blocked=False",
+        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), pair,
+        datetime.now(timezone.utc).strftime("%H:%M UTC"),
+    )
     logger.info("Confluence %d/10 for %s — inside kill zone, firing agent pipeline", score, pair)
+    _funnel["agents_fired"] += 1
 
     # Agent pipeline
     from agents.pipeline import run_pipeline
@@ -229,6 +256,37 @@ def _run_analysis(pair: str, candles: list) -> None:
     )
 
     _daily_stats["trades"] += 1
+    _funnel["trades_placed"] += 1
+
+
+# ---------------------------------------------------------------------------
+# Funnel summary
+# ---------------------------------------------------------------------------
+
+def _maybe_emit_funnel() -> None:
+    """Emit [FUNNEL] summary every 30 minutes while inside an active kill zone."""
+    from signal_engine import session as sess
+    now = datetime.now(timezone.utc)
+    if not sess.is_trading_allowed(now):
+        return
+    last = _funnel.get("_last_summary_utc")
+    if last is not None and (now - last).total_seconds() < _FUNNEL_SUMMARY_INTERVAL:
+        return
+    _funnel["_last_summary_utc"] = now
+    logger.info(
+        "[FUNNEL] candles_evaluated=%d | confluence_computed=%d | passed_threshold=%d"
+        " | agents_fired=%d | trades_placed=%d",
+        _funnel["candles_evaluated"], _funnel["confluence_computed"],
+        _funnel["passed_threshold"], _funnel["agents_fired"], _funnel["trades_placed"],
+    )
+
+
+def _reset_funnel() -> None:
+    _funnel.update({
+        "candles_evaluated": 0, "confluence_computed": 0,
+        "passed_threshold": 0, "agents_fired": 0, "trades_placed": 0,
+        "_last_summary_utc": None,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +320,7 @@ def _check_session_transition(pair: str, current_session: dict) -> None:
 
     if entering:
         reset_session_counters()
+        _reset_funnel()
         _send(f"<b>Session Start: {curr_name.upper()}</b>\nACE entering kill zone")
     elif leaving:
         pnl  = get_daily_pnl()

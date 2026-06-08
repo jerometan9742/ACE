@@ -1,9 +1,13 @@
 """Confluence Engine — scores each trade setup 0–10 and gates agent pipeline entry at threshold >= 7."""
 
+import logging
 import os
+from datetime import datetime, timezone
 from typing import List, Dict
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -108,6 +112,17 @@ def score_setup(
         tier = "medium"
     else:
         tier = "low"
+
+    _ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _reason = "" if passes_threshold else f"score {score} < threshold {CONFLUENCE_MIN_SCORE}"
+    logger.info(
+        "[CONFLUENCE] %s | %s | score=%d/10 | fvg=%d ob=%d kill_zone=%d bos=%d judas=%d volume=%d"
+        " | kill_zone_active=%s | fired=%s | reason=%s",
+        _ts, pair, score,
+        breakdown.get("fvg", 0), breakdown.get("order_block", 0), breakdown.get("kill_zone", 0),
+        breakdown.get("bos", 0), breakdown.get("judas", 0), breakdown.get("volume", 0),
+        in_kill_zone, passes_threshold, _reason,
+    )
 
     return {
         "score": score,
