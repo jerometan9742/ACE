@@ -65,6 +65,11 @@ def _process_candle(signal_data: dict) -> None:
     if len(candles) < 20:
         return
 
+    from risk.risk_gate import is_kill_switch_active
+    if is_kill_switch_active():
+        logger.info("[PAUSED] %s 5m — signal evaluation skipped", pair)
+        return
+
     _funnel["candles_evaluated"] += 1
     _maybe_emit_funnel()
 

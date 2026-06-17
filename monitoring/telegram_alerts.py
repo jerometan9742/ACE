@@ -182,7 +182,8 @@ def send_watchdog_alert(service: str, action: str) -> bool:
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Return bot status, mode, and open positions."""
-    status = "PAUSED (kill switch active)" if _kill_switch_active else "RUNNING"
+    from risk.risk_gate import is_kill_switch_active as _ks
+    status = "FULLY PAUSED (signal evaluation stopped)" if _ks() else "RUNNING"
     text = (
         f"<b>ACE Status</b>\n"
         f"Status: {status}\n"
@@ -202,21 +203,22 @@ async def cmd_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Activate kill switch — stops new trade entries."""
-    global _kill_switch_active
-    _kill_switch_active = True
+    """Activate full pause — halt all signal evaluation, keep price monitor and dashboard alive."""
+    from risk.risk_gate import activate_kill_switch as _activate
+    _activate("manual_pause")
     await update.message.reply_text(
-        "<b>Kill switch ACTIVATED</b> — no new trades will be entered.",
-        parse_mode="HTML",
+        "⏸️ ACE FULLY PAUSED — all chart evaluation and signal processing stopped. "
+        "Existing open positions (if any) still monitored for SL/TP. "
+        "Dashboard and bot commands remain active. Resume with /resume.",
     )
 
 
 async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Deactivate kill switch — resume normal trading."""
-    global _kill_switch_active
-    _kill_switch_active = False
+    """Remove kill_switch.lock — resume signal evaluation and trading."""
+    from risk.risk_gate import deactivate_kill_switch as _deactivate
+    _deactivate()
     await update.message.reply_text(
-        "<b>Kill switch DEACTIVATED</b> — trading resumed.",
+        "<b>ACE RESUMED</b> — signal evaluation and trading restored.",
         parse_mode="HTML",
     )
 
@@ -235,8 +237,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def is_kill_switch_active() -> bool:
-    """Return current kill switch state — called by RiskGate."""
-    return _kill_switch_active
+    """Return kill switch state from lock file — survives restarts."""
+    from risk.risk_gate import is_kill_switch_active as _ks
+    return _ks()
 
 
 def build_application() -> Application:
