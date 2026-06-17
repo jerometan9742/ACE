@@ -2,7 +2,7 @@
 
 from typing import List, Dict
 
-_IMPULSE_THRESHOLD = 0.03  # 3% move to qualify as an impulse
+_IMPULSE_THRESHOLD = 0.005  # 0.5% move to qualify as an impulse on 5m intraday candles
 
 
 def detect_order_blocks(candles: List[Dict]) -> List[Dict]:

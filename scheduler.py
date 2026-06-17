@@ -111,7 +111,7 @@ def _run_analysis(pair: str, candles: list) -> None:
     asia_low  = min(c["low"]  for c in recent)
     avg_vol   = sum(c["volume"] for c in recent) / len(recent)
     judas_data = judas_swing.detect_judas_swing(candles, asia_high, asia_low, avg_vol)
-    volume_data = {"confirms": avg_vol > 0}
+    volume_data = {"confirms": candles[-1]["volume"] > avg_vol}
 
     conf_result = confluence.score_setup(
         pair=pair, price=price, candles=candles,
