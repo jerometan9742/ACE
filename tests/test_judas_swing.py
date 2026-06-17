@@ -118,3 +118,21 @@ def test_confidence_is_highest_for_1_bar_return():
     ]
     result = detect_judas_swing(candles, ASIA_HIGH, ASIA_LOW, AVG_VOL)
     assert result["confidence"] > 0.9
+
+
+def test_returns_most_recent_judas_not_oldest():
+    """With two Judas swings in the series, the most recent one must be returned."""
+    old_sweep  = _c(101, 105, 100, 104, 400)  # bearish: high=105 > ASIA_HIGH=102, low vol
+    old_return = _c(104, 104, 100, 101, 900)  # closes < 102
+
+    filler = [_c(100, 101, 99, 100, 900) for _ in range(10)]
+
+    new_sweep  = _c(99, 100, 95, 96, 400)  # bullish: low=95 < ASIA_LOW=98, low vol
+    new_return = _c(96, 100, 96, 99, 800)  # closes > 98
+
+    candles = [_c(101, 102, 100, 101, 1000), old_sweep, old_return] + filler + [new_sweep, new_return]
+    result = detect_judas_swing(candles, ASIA_HIGH, ASIA_LOW, AVG_VOL)
+
+    assert result["detected"] is True
+    assert result["direction"] == "bullish", "should return the most recent swing, not the old resolved one"
+    assert result["sweep_price"] == 95.0

@@ -33,7 +33,7 @@ def detect_judas_swing(
     if not candles or asia_high <= 0 or asia_low <= 0 or avg_volume <= 0:
         return result
 
-    for i in range(len(candles)):
+    for i in range(len(candles) - 1, -1, -1):
         c = candles[i]
         low_volume = c["volume"] < avg_volume * _LOW_VOLUME_RATIO
 
